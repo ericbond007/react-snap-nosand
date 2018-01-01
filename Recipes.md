@@ -1,5 +1,7 @@
 # create-react-app recipes
 
+[![Hacker News](https://img.shields.io/badge/Hacker%20News-Y-orange.svg)](https://news.ycombinator.com/item?id=15521574)
+
 <!-- toc -->
 
 - [General](#general)
@@ -7,10 +9,8 @@
   * [Preact without ejecting](#preact-without-ejecting)
   * [Split in chunks](#split-in-chunks)
   * [Configure sw-precache without ejecting](#configure-sw-precache-without-ejecting)
-  * [Use sw-precache with Google Analytics](#use-sw-precache-with-google-analytics)
   * [Add Appcache](#add-appcache)
   * [Meta tags](#meta-tags)
-  * [The Perfect 404](#the-perfect-404)
 - [Hosting on AWS S3 + cloudflare.com](#hosting-on-aws-s3--cloudflarecom)
   * [Setup Cloudflare](#setup-cloudflare)
   * [Deployment](#deployment)
@@ -28,8 +28,6 @@
 Use [react-snap](https://github.com/stereobooster/react-snap/blob/master/Readme.md#basic-usage-with-create-react-app) ;)
 
 ### Preact without ejecting
-
-Full example is [here](https://github.com/stereobooster/an-almost-static-stack/blob/react-snap/scripts/build-preact.js).
 
 ```sh
 yarn add preact preact-compat
@@ -56,8 +54,6 @@ With webpack 2+ you can use dynamic `import` to split bundles in chunks. See art
 
 ### Configure sw-precache without ejecting
 
-Full example is [here](https://github.com/stereobooster/an-almost-static-stack/blob/react-snap/scripts/sw-precache-config.js).
-
 Tip: See [material design offline states](https://material.io/guidelines/patterns/offline-states.html) for UI advices on offline applications. Also see section about [snackbars & toasts](https://material.io/guidelines/components/snackbars-toasts.html).
 
 `package.json`:
@@ -73,8 +69,6 @@ Tip: See [material design offline states](https://material.io/guidelines/pattern
 
 ```js
 module.exports = {
-  // a directory should be the same as "reactSnap.destination",
-  // which default value is `build`
   staticFileGlobs: [
     "build/static/css/*.css",
     "build/static/js/*.js",
@@ -83,41 +77,21 @@ module.exports = {
   ],
   stripPrefix: "build",
   publicPath: ".",
-  // there is "reactSnap.include": ["/shell.html"] in package.json
-  navigateFallback: "/shell.html",
-  // Ignores URLs starting from /__ (useful for Firebase):
-  // https://github.com/facebookincubator/create-react-app/issues/2237#issuecomment-302693219
-  navigateFallbackWhitelist: [/^(?!\/__).*/],
-  // By default, a cache-busting query parameter is appended to requests
-  // used to populate the caches, to ensure the responses are fresh.
-  // If a URL is already hashed by Webpack, then there is no concern
-  // about it being stale, and the cache-busting can be skipped.
-  dontCacheBustUrlsMatching: /\.\w{8}\./,
-  // configuration specific to this experiment
-  runtimeCaching: [
-    {
-      urlPattern: /api/,
-      handler: "fastest"
-    }
-  ]
+  runtimeCaching: [{
+    urlPattern: /images/,
+    handler: "fastest"
+  }],
+  navigateFallback: '/shell.html'
 };
 ```
 
-You can use `200.html` instead of `shell.html` if you use `react-snap` and do not have separate `shell.html`. This is important because `react-snap` will prerender `index.html` and when user will be offline their will see a flash of `index.html` on navigation.
-
-### Use sw-precache with Google Analytics
-
-See this article https://developers.google.com/web/updates/2016/07/offline-google-analytics
+You can use `200.html` instead of `shell.html` if you use `react-snap` and do not have separate `shell.html`. This is important because `react-snap` will prerender `index.html` and when user will be offline their will see a flash of your homepage on navigation.
 
 ### Add Appcache
-
-Full example is [here](https://github.com/stereobooster/an-almost-static-stack/blob/react-snap/scripts/generate-appcache.js)
 
 [Webkit promises to add Service Worker support](https://webkit.org/status/#specification-service-workers) meantime we can use Appcache.
 
 Tip: you can prompt user to "install your site as web app", like [this](https://www.npmjs.com/package/angular-add-to-home-screen).
-
-Tip 2: you may want something like [localForage](https://localforage.github.io/localForage/) to save data on client side
 
 ```sh
 yarn add appcache-nanny
@@ -230,8 +204,6 @@ export function unregister() {
 
 ### Meta tags
 
-Full example is [here](https://github.com/stereobooster/an-almost-static-stack/blob/react-snap/src/components/Seo.js).
-
 Tip: If you do not have images for social media, you can use screenshots of your website. See [Use to render screenshots](#use-to-render-screenshots) section.
 
 ```sh
@@ -292,10 +264,6 @@ const Meta = (data) => {
 export default Meta
 ```
 
-### The Perfect 404
-
-See [The Perfect 404](https://alistapart.com/article/perfect404)
-
 ## Hosting on AWS S3 + cloudflare.com
 
 If you have less than 20k requests in a month you can host for free. Plus you can get free SSL from CloudFlare.
@@ -313,8 +281,6 @@ Basic AWS S3 setup described [here](http://docs.aws.amazon.com/AmazonS3/latest/u
 Some additional bits about CloudFlare: https://github.com/virtualjj/aws-s3-backed-cloudflare-static-website
 
 ### Deployment
-
-Full example is [here](https://github.com/stereobooster/an-almost-static-stack/blob/react-snap/scripts/aws-deploy.js).
 
 Use [s3-sync-aws](https://www.npmjs.com/package/s3-sync-aws) for deployment:
 
@@ -373,22 +339,12 @@ _(files)
 
 ### Usage with Google Analytics
 
-First way:
-
 ```js
 import ReactGA from 'react-ga'
 const snap = navigator.userAgent !== 'ReactSnap';
 const production = process.env.NODE_ENV === 'production';
 if (production && snap) { ReactGA.initialize('XX-XXXXXXXX-X') }
 ```
-
-Second way:
-
-```
-"skipThirdPartyRequests": true
-```
-
-Tip: see [The Google Analytics Setup I Use on Every Site I Build](https://philipwalton.com/articles/the-google-analytics-setup-i-use-on-every-site-i-build/), [ganalytics](https://github.com/lukeed/ganalytics)
 
 ### Use to render screenshots
 

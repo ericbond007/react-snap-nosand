@@ -1,72 +1,46 @@
 const puppeteer = require("puppeteer");
 const _ = require("highland");
-const url = require("url");
+const Url = require("url");
 // @ts-ignore
 const mapStackTrace = require("sourcemapped-stacktrace-node").default;
-const path = require("path");
-const fs = require("fs");
 
 /**
- * @param {{page: Page, options: {skipThirdPartyRequests: true}, basePath: string }} opt
- * @return {Promise<void>}
- */
-const skipThirdPartyRequests = async opt => {
-  const { page, options, basePath } = opt;
-  if (!options.skipThirdPartyRequests) return;
-  await page.setRequestInterceptionEnabled(true);
-  page.on("request", request => {
-    if (request.url.startsWith(basePath)) {
-      request.continue();
-    } else {
-      request.abort();
-    }
-  });
-};
-
-/**
- * @param {{page: Page, options: {sourceMaps: boolean}, route: string, onError: ?function }} opt
+ * @param {!Puppeteer.Page} page
+ * @param {!Object} options
+ * @param {!string} route
  * @return {void}
  */
-const enableLogging = opt => {
-  const { page, options, route, onError, sourcemapStore } = opt;
-  page.on("console", msg => console.log(`✏️  ${route} log:`, msg));
-  page.on("error", msg => {
-    console.log(`🔥  ${route} error:`, msg);
-    onError && onError();
-  });
+const enableLogging = ({ page, options, route }) => {
+  page.on("console", msg => console.log(`${route} log:`, msg));
+  page.on("error", msg => console.log(`${route} error:`, msg));
   page.on("pageerror", e => {
     if (options.sourceMaps) {
-      mapStackTrace(e.stack, {
-        isChromeOrEdge: true,
-        store: sourcemapStore || {}
-      }).then(result => {
-        // TODO: refactor mapStackTrace: return array not a string, return first row too
-        const stackRows = result.split("\n");
-        const puppeteerLine =
-          stackRows.findIndex(x => x.includes("puppeteer")) ||
-          stackRows.length - 1;
-
-        console.log(
-          `🔥  ${route} pageerror: ${e.stack.split("\n")[0] +
-            "\n"}${stackRows.slice(0, puppeteerLine).join("\n")}`
-        );
-      });
+      mapStackTrace(
+        e.stack,
+        result => {
+          console.log(
+            `${route} pageerror: ${e.stack.split("\n")[0] + "\n"}${result.join(
+              "\n"
+            )}`
+          );
+        },
+        { isChromeOrEdge: true }
+      );
     } else {
-      console.log(`🔥  ${route} pageerror:`, e);
+      console.log(`${route} pageerror:`, e);
     }
-    onError && onError();
   });
   // page.on("requestfailed", msg =>
   //   console.log(`${route} requestfailed:`, msg)
   // );
+  return page;
 };
 
 /**
- * @param {{page: Page}} opt
+ * @param {!Puppeteer.Page} page
  * @return {Promise<Array<string>>}
  */
-const getLinks = async opt => {
-  const { page } = opt;
+const getLinks = async ({ page }) => {
   const anchors = await page.evaluate(() =>
     Array.from(document.querySelectorAll("a")).map(anchor => anchor.href)
   );
@@ -80,30 +54,33 @@ const getLinks = async opt => {
 /**
  * can not use null as default for function because of TS error https://github.com/Microsoft/TypeScript/issues/14889
  *
- * @param {{options: *, basePath: string, beforeFetch: ?(function({ page: Page, route: string }):Promise), afterFetch: ?(function({ page: Page, browser: Browser, route: string }):Promise), onEnd: ?(function():void)}} opt
+ * @param {!Object} options
+ * @param {!string} basePath
+ * @param {function({ page: !Puppeteer.Page, route: !string }):Promise} beforeFetch
+ * @param {function({ page: !Puppeteer.Page, route: !string }):Promise} aferFeth
+ * @param {function():void} onEnd
  * @return {Promise}
  */
-const crawl = async opt => {
-  const {
-    options,
-    basePath,
-    beforeFetch,
-    afterFetch,
-    onEnd,
-    publicPath,
-    sourceDir
-  } = opt;
+const crawl = async ({
+  options,
+  basePath,
+  beforeFetch = ({ page, route }) => {
+    ({ page, route });
+  },
+  aferFeth = ({ page, route }) => {
+    ({ page, route });
+  },
+  onEnd = () => {}
+}) => {
   let shuttingDown = false;
-  let streamClosed = false;
   // TODO: this doesn't work as expected
-  // process.stdin.resume();
   process.on("SIGINT", () => {
     if (shuttingDown) {
-      process.exit(1);
+      process.exit();
     } else {
       shuttingDown = true;
       console.log(
-        "\nGracefully shutting down. To exit immediately, press ^C again"
+        "Gracefully shutting down. To exit immediately, press ^C again"
       );
     }
   });
@@ -111,89 +88,49 @@ const crawl = async opt => {
   const queue = _();
   let enqued = 0;
   let processed = 0;
-  // use Set instead
-  const uniqueUrls = new Set();
-  const sourcemapStore = {};
+  const uniqueUrls = {};
 
   /**
-   * @param {string} path
+   * @param {string} url
    * @returns {void}
    */
-  const addToQueue = newUrl => {
-    const { hostname, search, hash } = url.parse(newUrl);
-    newUrl = newUrl.replace(`${search || ""}${hash || ""}`, "");
-    if (hostname === "localhost" && !uniqueUrls.has(newUrl) && !streamClosed) {
-      uniqueUrls.add(newUrl);
+  const addToQueue = url => {
+    if (Url.parse(url).hostname === "localhost" && !uniqueUrls[url]) {
+      uniqueUrls[url] = true;
       enqued++;
-      queue.write(newUrl);
-      if (enqued == 2 && options.crawl) {
-        addToQueue(`${basePath}${publicPath}/404.html`);
-      }
+      queue.write(url);
     }
   };
 
   const browser = await puppeteer.launch({
     headless: options.headless,
-    args: options.puppeteerArgs,
-    handleSIGINT: false
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
   });
-
   /**
-   * @param {string} pageUrl
+   * @param {string} url
    * @returns {Promise<string>}
    */
-  const fetchPage = async pageUrl => {
-    const route = pageUrl.replace(basePath, "");
-
-    let skipExistingFile = false;
-    const routePath = route.replace(/\//g, path.sep);
-    const { ext } = path.parse(routePath);
-    if (ext !== ".html" && ext !== "") {
-      const filePath = path.join(sourceDir, routePath);
-      skipExistingFile = fs.existsSync(filePath);
-    }
-
-    if (!shuttingDown && !skipExistingFile) {
-      try {
-        const page = await browser.newPage();
-        if (options.viewport) await page.setViewport(options.viewport);
-        if (options.skipThirdPartyRequests)
-          await skipThirdPartyRequests({ page, options, basePath });
-        enableLogging({
-          page,
-          options,
-          route,
-          onError: () => {
-            shuttingDown = true;
-          },
-          sourcemapStore
-        });
-        beforeFetch && beforeFetch({ page, route });
-        await page.setUserAgent(options.userAgent);
-        await page.goto(pageUrl, { waitUntil: "networkidle" });
-        if (options.waitFor) await page.waitFor(options.waitFor);
-        if (options.crawl) {
-          const links = await getLinks({ page });
-          links.forEach(addToQueue);
-        }
-        afterFetch && (await afterFetch({ page, route, browser }));
-        await page.close();
-        console.log(`🕸  (${processed + 1}/${enqued}) ${route}`);
-      } catch (e) {
-        if (!shuttingDown) {
-          console.log(`🔥  ${route} ${e}`);
-        }
-        shuttingDown = true;
+  const fetchPage = async url => {
+    if (!shuttingDown) {
+      const route = url.replace(basePath, "");
+      const page = await browser.newPage();
+      if (options.viewport) await page.setViewport(options.viewport);
+      enableLogging({ page, options, route });
+      beforeFetch({ page, route });
+      await page.setUserAgent(options.userAgent);
+      await page.goto(url, { waitUntil: "networkidle" });
+      if (options.waitFor) await page.waitFor(options.waitFor);
+      if (options.crawl) {
+        const links = await getLinks({ page });
+        links.forEach(addToQueue);
       }
-    } else {
-      console.log(`🚧  skipping (${processed + 1}/${enqued}) ${route}`);
+      await aferFeth({ page, route });
+      await page.close();
+      console.log(`Crawled ${processed + 1} out of ${enqued} (${route})`);
     }
     processed++;
-    if (enqued === processed) {
-      streamClosed = true;
-      queue.end();
-    }
-    return pageUrl;
+    if (enqued === processed) queue.end();
+    return url;
   };
 
   if (options.include) {
@@ -202,15 +139,13 @@ const crawl = async opt => {
 
   queue
     .map(x => _(fetchPage(x)))
-    .mergeWithLimit(options.concurrency)
+    .parallel(options.concurrency)
     .toArray(async function() {
       await browser.close();
-      onEnd && onEnd();
-      if (shuttingDown) process.exit(1);
+      onEnd();
     });
 };
 
-exports.skipThirdPartyRequests = skipThirdPartyRequests;
 exports.enableLogging = enableLogging;
 exports.getLinks = getLinks;
 exports.crawl = crawl;
